@@ -9,15 +9,18 @@
 #include <nrfx_rtc.h>
 #include <nrfx_dppi.h>
 #include <nrfx_gpiote.h> // Need to figure out how I can connect this to
+#include <nrfx_timer.h>
 
 /* 1000 msec = 1 sec */
-#define SLEEP_TIME_MS 5000 // ms
-#define TICKS_US NRFX_RTC_US_TO_TICKS(5000000, 1)
+#define SLEEP_TIME_MS 50000 // ms
+#define TICKS_US NRFX_RTC_US_TO_TICKS(50000000000, 1)
+#define RTC_IDX 0
+#define LED_PIN_NUMBER 2
 
 /*define pin number for led 1, could also do #define LED_NODE DT_ALIAS(led0), and then #define PIN_LED0 DT_GPIO_PIN(LED_NODE, gpios) I think*/
 #define PIN_LED0 2
-
-static const nrfx_rtc_t rtc = NRFX_RTC_INSTANCE(1);
+// static const nrfx_timer_t timer = NRFX_TIMER_INSTANCE(2);
+static const nrfx_rtc_t rtc = NRFX_RTC_INSTANCE(RTC_IDX);
 
 // NRFX_RTC_INT_COMPARE0 = 0, /**< Interrupt from COMPARE0 event. */
 // NRFX_RTC_INT_COMPARE1 = 1, /**< Interrupt from COMPARE1 event. */
@@ -31,31 +34,32 @@ void rtc_handler(nrfx_rtc_int_type_t evt)
 	{
 		printk("Timer\n");
 		// toggle a light, but if I use this one, would I then use the CPU?
+		nrfx_rtc_counter_clear(&rtc);
 	}
 	else if (evt == 1)
 	{
-		printk("comp1");
+		printk("comp1\n");
 	}
 	else if (evt == 2)
 	{
-		printk("comp2");
+		printk("comp2\n");
 	}
 	else if (evt == 3)
 	{
-		printk("comp3");
+		printk("comp3\n");
 	}
 	else if (evt == 4)
 	{
-		printk("interrupt from TICK event");
+		printk("interrupt from TICK event\n");
 	}
 	else if (evt == 5)
 	{
-		printk("interrupt from OVERFLOW event");
+		printk("interrupt from OVERFLOW event\n");
 	}
 
 	else
 	{
-		printk("something wierd is happening");
+		printk("something wierd is happening\n");
 	}
 }
 
@@ -64,10 +68,11 @@ int main(void)
 	int err;
 
 	printk("Start\n");
-	printk("%d\n", TICKS_US);
 
 	// configuring the RTC settings, just using the default
 	nrfx_rtc_config_t config = NRFX_RTC_DEFAULT_CONFIG;
+	// config.prescaler = 3276;
+
 	err = nrfx_rtc_init(&rtc, &config, &rtc_handler);
 	if (err != NRFX_SUCCESS)
 	{
@@ -77,7 +82,10 @@ int main(void)
 	{
 		printk("init succeded\n");
 	}
-
+#if defined(__ZEPHYR__)
+	IRQ_DIRECT_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_RTC_INST_GET(RTC_IDX)), IRQ_PRIO_LOWEST,
+					   NRFX_RTC_INST_HANDLER_GET(RTC_IDX), 0);
+#endif
 	// initializing the rtc, need to define the handler
 
 	// uint32_t ticks = calculate_ticks(3, 1);
@@ -85,7 +93,7 @@ int main(void)
 	nrfx_rtc_enable(&rtc);
 
 	// Enable the rtc, not sure if I was supposed to use the rtc or if I was supposed to just use a timer
-	err = nrfx_rtc_cc_set(&rtc, 0, 100, false); // setting compare register 0
+	err = nrfx_rtc_cc_set(&rtc, 0, TICKS_US, true); // setting compare register 0
 	if (err != NRFX_SUCCESS)
 	{
 		printk("cc set failed\n");
@@ -93,6 +101,11 @@ int main(void)
 	if (err == NRFX_SUCCESS)
 	{
 		printk("cc set succeded\n");
+	}
+	while (1)
+	{
+		k_msleep(500);
+		printk("counter value: %d \n", nrfx_rtc_counter_get(&rtc));
 	}
 
 	/*WHATS LEFT TO DO*/
@@ -104,106 +117,3 @@ int main(void)
 
 	return 0;
 }
-
-// /* The devicetree node identifier for the "led0" alias. */
-// #define LED0_NODE DT_ALIAS(led0)
-// #define LED1_NODE DT_ALIAS(led1)
-// #define STACKSIZE 1024
-// #define THREAD0_PRIORITY 7
-// #define THREAD1_PRIORITY 7
-// /*
-//  * A build error on this line means your board is unsupported.
-//  * See the sample documentation for information on how to fix this.
-//  */
-// static const struct gpio_dt_spec led_0 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
-// static const struct gpio_dt_spec led_1 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
-
-// int main(void)
-// {
-// 	int ret;
-// 	if (!gpio_is_ready_dt(&led_0)) {
-// 		return 0;
-// 	}
-
-// 	ret = gpio_pin_configure_dt(&led_0, GPIO_OUTPUT_ACTIVE);
-// 	if (ret < 0) {
-// 		return 0;
-// 	}
-// 	if (!gpio_is_ready_dt(&led_1)) {
-// 		return 0;
-// 	}
-
-// 	ret = gpio_pin_configure_dt(&led_1, GPIO_OUTPUT_ACTIVE);
-// 	if (ret < 0) {
-// 		return 0;
-// 	}
-
-// 	while (1) {
-// 		ret = gpio_pin_toggle_dt(&led_0);
-// 		if (ret < 0) {
-// 			return 0;
-// 		}
-// 		k_msleep(SLEEP_TIME_MS);
-// 		ret = gpio_pin_toggle_dt(&led_0);
-// 		if (ret < 0) {
-// 			return 0;
-// 		}
-// 		ret = gpio_pin_toggle_dt(&led_1);
-// 		if (ret < 0) {
-// 			return 0;
-// 		}
-// 		k_msleep(SLEEP_TIME_MS);
-// 		ret = gpio_pin_toggle_dt(&led_1);
-// 		if (ret < 0) {
-// 			return 0;
-// 		}
-// 	}
-// }
-// int thread0(void)
-// {
-// 	int ret;
-
-// 	if (!gpio_is_ready_dt(&led_0)) {
-// 		return 0;
-// 	}
-
-// 	ret = gpio_pin_configure_dt(&led_0, GPIO_OUTPUT_ACTIVE);
-// 	if (ret < 0) {
-// 		return 0;
-// 	}
-
-// 	while (1) {
-// 		k_msleep(SLEEP_TIME_MS);
-// 		ret = gpio_pin_toggle_dt(&led_0);
-// 		if (ret < 0) {
-// 			return 0;
-// 		}
-// 	}
-// 	return 0;
-// }
-
-// int thread1(void)
-// {
-// 	int ret;
-
-// 	if (!gpio_is_ready_dt(&led_1)) {
-// 		return 0;
-// 	}
-
-// 	ret = gpio_pin_configure_dt(&led_1, GPIO_OUTPUT_ACTIVE);
-// 	if (ret < 0) {
-// 		return 0;
-// 	}
-
-// 	while (1) {
-// 		ret = gpio_pin_toggle_dt(&led_1);
-// 		if (ret < 0) {
-// 			return 0;
-// 		}
-// 		k_msleep(SLEEP_TIME_MS);
-// 	}
-// 	return 0;
-// }
-
-// K_THREAD_DEFINE(thread0_id, STACKSIZE, thread0, NULL, NULL, NULL, THREAD0_PRIORITY, 0, 0);
-// K_THREAD_DEFINE(thread1_id, STACKSIZE, thread1, NULL, NULL, NULL, THREAD1_PRIORITY, 0, 0);
