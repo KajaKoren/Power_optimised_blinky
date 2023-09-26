@@ -10,57 +10,103 @@
 #include <nrfx_dppi.h>
 #include <nrfx_gpiote.h> // Need to figure out how I can connect this to
 #include <nrfx_timer.h>
+#include <helpers/nrfx_gppi.h>
 
 /* 1000 msec = 1 sec */
 #define SLEEP_TIME_MS 50000 // ms
-#define TICKS_US NRFX_RTC_US_TO_TICKS(50000000000, 1)
+#define TICKS_US NRFX_RTC_US_TO_TICKS(50000000, 1)
 #define RTC_IDX 0
+/*define pin number for led 1, could also do #define LED_NODE DT_ALIAS(led0), and then #define PIN_LED0 DT_GPIO_PIN(LED_NODE, gpios), but uneccessary steps*/
 #define LED_PIN_NUMBER 2
+#define DPPI_CHANNEL 3
+#define GPIOTE_CHANNEL 4
+#define INTR_PRIORITY 4
 
-/*define pin number for led 1, could also do #define LED_NODE DT_ALIAS(led0), and then #define PIN_LED0 DT_GPIO_PIN(LED_NODE, gpios) I think*/
-#define PIN_LED0 2
-// static const nrfx_timer_t timer = NRFX_TIMER_INSTANCE(2);
 static const nrfx_rtc_t rtc = NRFX_RTC_INSTANCE(RTC_IDX);
+uint8_t dppi_channel;
+uint8_t gpiote_channel;
 
-// NRFX_RTC_INT_COMPARE0 = 0, /**< Interrupt from COMPARE0 event. */
-// NRFX_RTC_INT_COMPARE1 = 1, /**< Interrupt from COMPARE1 event. */
-// NRFX_RTC_INT_COMPARE2 = 2, /**< Interrupt from COMPARE2 event. */
-// NRFX_RTC_INT_COMPARE3 = 3, /**< Interrupt from COMPARE3 event. */
-// NRFX_RTC_INT_TICK     = 4, /**< Interrupt from TICK event. */
-// NRFX_RTC_INT_OVERFLOW = 5  /**< Interrupt from OVERFLOW event. */
 void rtc_handler(nrfx_rtc_int_type_t evt)
 {
 	if (evt == 0)
 	{
 		printk("Timer\n");
 		// toggle a light, but if I use this one, would I then use the CPU?
+		nrf_gpio_pin_toggle(LED_PIN_NUMBER);
 		nrfx_rtc_counter_clear(&rtc);
 	}
 	else if (evt == 1)
 	{
 		printk("comp1\n");
 	}
-	else if (evt == 2)
-	{
-		printk("comp2\n");
-	}
-	else if (evt == 3)
-	{
-		printk("comp3\n");
-	}
-	else if (evt == 4)
-	{
-		printk("interrupt from TICK event\n");
-	}
-	else if (evt == 5)
-	{
-		printk("interrupt from OVERFLOW event\n");
-	}
 
 	else
 	{
 		printk("something wierd is happening\n");
 	}
+}
+
+void led_init(void)
+{
+	nrf_gpio_cfg_output(LED_PIN_NUMBER);
+	nrf_gpio_pin_clear(LED_PIN_NUMBER); // Initially turn the LED off
+}
+
+void conf_gpiote(void)
+{
+	nrfx_err_t res;
+
+	res = nrfx_gpiote_channel_alloc(&gpiote_channel); // allocates GPIOTE channel, not 100% sure if i need this
+	// initializing the driver
+	if (res != NRFX_SUCCESS)
+	{
+		printk("There is no avaiable channels - gpiote \n");
+	}
+	if (!nrfx_gpiote_is_init())
+	{
+		res = nrfx_gpiote_init((uint8_t)INTR_PRIORITY);
+		if (res != NRFX_SUCCESS)
+		{
+			printk("The driver was already initalized, which should not happen, since we check before initializing- gpiote\n ");
+		}
+	}
+
+	// Configuration for task
+	nrfx_gpiote_task_config_t config_gpiote_task;
+	config_gpiote_task.init_val = GPIOTE_CONFIG_OUTINIT_Low;	 // We start with the led being off.
+	config_gpiote_task.polarity = GPIOTE_CONFIG_POLARITY_Toggle; // We want to toggle the led, so I assume this is correct
+	config_gpiote_task.task_ch = gpiote_channel;				 // setting the task channel to be 4 - I assume that we also could have made a macro for this
+
+	// configuration for output pin
+	nrfx_gpiote_output_config_t config_gpiote = NRFX_GPIOTE_DEFAULT_OUTPUT_CONFIG;
+
+	res = nrfx_gpiote_output_configure((nrfx_gpiote_pin_t)LED_PIN_NUMBER, &config_gpiote, &config_gpiote_task); // (nrfx_gpiote_pin_t) this is used to make sure
+	// to treat the value of LED_PIN_NUMBER as a nrfx_gpio_pin_t type (wich esentially just is a 32-bit unsigned integer)
+
+	if (res != NRFX_SUCCESS)
+	{
+		printk("error configuring the gpiote");
+	}
+	nrfx_gpiote_out_task_enable((nrfx_gpiote_pin_t)LED_PIN_NUMBER);
+}
+
+void conf_dppi(void)
+{
+	nrfx_err_t res;
+	nrfx_dppi_free();
+	res = nrfx_dppi_channel_alloc(&dppi_channel);
+	if (res != NRFX_SUCCESS)
+	{
+		printk("There is no avaiable channels - dppi \n");
+	}
+	res = nrfx_dppi_channel_enable(dppi_channel);
+	if (res != NRFX_SUCCESS)
+	{
+		printk("The spesific channel is not allocated - dppi \n");
+	}
+	uint32_t evt_addr = nrfx_rtc_event_address_get(&rtc, NRF_RTC_EVENT_COMPARE_0);
+	uint32_t tsk_addr = nrfx_gpiote_out_task_address_get((nrfx_gpiote_pin_t)LED_PIN_NUMBER);
+	nrfx_gppi_channel_endpoints_setup(dppi_channel, evt_addr, tsk_addr);
 }
 
 int main(void)
@@ -82,6 +128,9 @@ int main(void)
 	{
 		printk("init succeded\n");
 	}
+
+	led_init();
+
 #if defined(__ZEPHYR__)
 	IRQ_DIRECT_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_RTC_INST_GET(RTC_IDX)), IRQ_PRIO_LOWEST,
 					   NRFX_RTC_INST_HANDLER_GET(RTC_IDX), 0);
@@ -93,7 +142,8 @@ int main(void)
 	nrfx_rtc_enable(&rtc);
 
 	// Enable the rtc, not sure if I was supposed to use the rtc or if I was supposed to just use a timer
-	err = nrfx_rtc_cc_set(&rtc, 0, TICKS_US, true); // setting compare register 0
+	err = nrfx_rtc_cc_set(&rtc, 0, TICKS_US, false); // setting compare register 0
+
 	if (err != NRFX_SUCCESS)
 	{
 		printk("cc set failed\n");
@@ -102,6 +152,9 @@ int main(void)
 	{
 		printk("cc set succeded\n");
 	}
+	nrfx_rtc_tick_enable(&rtc, false);
+	conf_gpiote();
+	conf_dppi();
 	while (1)
 	{
 		k_msleep(500);
